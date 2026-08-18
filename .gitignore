@@ -1,0 +1,35 @@
+# Build outputs
+build/
+build-host/
+build-board/
+run/
+*.o
+*.a
+*.so
+*.dylib
+
+# Binaries
+encoder
+player
+rtsp_server
+rtsp_channel
+publisher_supervisor
+preview_supervisor
+shm_dump
+test_pattern
+
+# IDE / local
+.cursor/
+.vscode/
+*.swp
+*~
+
+# Temp / runtime dumps
+*.yuv
+*.h265
+*.nv12
+
+# Secrets
+.env
+*.pem
+credentials.json

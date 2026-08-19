@@ -11,6 +11,22 @@
 #include <string.h>
 #include <unistd.h>
 
+static int count_rtsp_tasks(const IniConfig *cfg, int chn) {
+    if (chn <= 1) {
+        return chn;
+    }
+    const char *url0 = ini_get(cfg, "rtspUrl_0", "rtsp://127.0.0.1:554/live");
+    for (int i = 1; i < chn; ++i) {
+        char key[32];
+        snprintf(key, sizeof(key), "rtspUrl_%d", i);
+        if (strcmp(ini_get(cfg, key, url0), url0) != 0) {
+            return chn;
+        }
+    }
+    LOGI("preview: duplicate rtsp URLs -> single rtsp_channel");
+    return 1;
+}
+
 int main(int argc, char **argv) {
     const char *cfg_path = (argc > 1) ? argv[1] : "config/preview.ini";
     const char *bin_dir = (argc > 2) ? argv[2] : ".";
@@ -34,6 +50,9 @@ int main(int argc, char **argv) {
     int dump_every = ini_get_int(&cfg, "dumpEvery", 0);
     int display_channel = ini_get_int(&cfg, "displayChannel", 0);
     int display_stretch = ini_get_int(&cfg, "displayStretch", 1);
+    const char *preview_mode = ini_get(&cfg, "previewMode", "rtsp");
+    int local_preview = (strcmp(preview_mode, "local") == 0);
+    int rtsp_tasks = local_preview ? 0 : count_rtsp_tasks(&cfg, chn);
     char rtsp_bin[512];
     char player_bin[512];
     snprintf(rtsp_bin, sizeof(rtsp_bin), "%s/rtsp_channel", bin_dir);
@@ -44,10 +63,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (local_preview) {
+        LOGI("preview: local NV12 mode (bypass rtsp_channel/decode)");
+        setenv("PREVIEW_LOCAL", "1", 1);
+    }
+
     SupState st;
     memset(&st, 0, sizeof(st));
     char ch_arg[16];
-    for (int i = 0; i < chn; ++i) {
+    for (int i = 0; i < rtsp_tasks; ++i) {
         char key[32];
         snprintf(key, sizeof(key), "rtspUrl_%d", i);
         const char *url = ini_get(&cfg, key, "rtsp://127.0.0.1:554/live");
@@ -70,13 +94,15 @@ int main(int argc, char **argv) {
     sup_add11(&st, "player", player_bin, chn_arg, w_arg, h_arg, dump_arg, rot_arg, ref_arg,
               disp_w_arg, disp_h_arg, drm_arg, disp_ch_arg, stretch_arg);
 
-    /* player 先起；等待 RTSP 554 就绪后再错峰拉流 */
-    sup_start_one(&st, chn);
-    sleep(5);
-    for (int i = 0; i < chn; ++i) {
-        sup_start_one(&st, i);
-        if (i + 1 < chn) {
-            sleep(10);
+    /* player 先起；local 模式不等 RTSP */
+    sup_start_one(&st, rtsp_tasks);
+    if (!local_preview) {
+        sleep(5);
+        for (int i = 0; i < rtsp_tasks; ++i) {
+            sup_start_one(&st, i);
+            if (i + 1 < rtsp_tasks) {
+                sleep(10);
+            }
         }
     }
 

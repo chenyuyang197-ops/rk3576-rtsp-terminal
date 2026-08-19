@@ -64,7 +64,7 @@ static int push_access_unit(uint32_t ch, int *frame, const uint8_t *au, int au_l
 static int run_gst_pull(uint32_t ch, const char *url, int *total_frames) {
     char cmd[1024];
     snprintf(cmd, sizeof(cmd),
-             "gst-launch-1.0 -q rtspsrc location=%s latency=100 "
+             "gst-launch-1.0 -q rtspsrc location=%s latency=50 protocols=tcp "
              "drop-on-latency=true ! rtph265depay ! h265parse ! "
              "video/x-h265,stream-format=byte-stream,alignment=au ! "
              "fdsink fd=1 sync=false",

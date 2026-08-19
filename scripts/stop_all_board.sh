@@ -32,4 +32,13 @@ kill_one rtsp_channel
 kill_one player
 killall -9 gst-launch-1.0 2>/dev/null || true
 sleep 1
+
+# 清理 publisher/preview 遗留 shm（slot 尺寸变更后 attach 会失败）
+for key in 0x5200 0x5210 0x5300 0x5310; do
+  id=$(ipcs -m 2>/dev/null | awk -v k="$key" '$1 == k {print $2; exit}')
+  if [ -n "${id:-}" ]; then
+    ipcrm -m "$id" 2>/dev/null || true
+  fi
+done
+
 echo "[stop_all] done"

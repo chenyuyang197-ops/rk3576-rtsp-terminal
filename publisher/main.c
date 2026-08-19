@@ -32,11 +32,12 @@ int main(int argc, char **argv) {
     int cam_w = ini_get_int(&cfg, "cameraWidth", 1920);
     int cam_h = ini_get_int(&cfg, "cameraHeight", 1080);
     int cam_rot = ini_get_int(&cfg, "cameraRotation", 270);
+    int local_tap = ini_get_int(&cfg, "localNv12Tap", 0);
 
     char enc_bin[512];
     char srv_bin[512];
     char w_arg[16], h_arg[16], fps_arg[16], port_arg[16], sec_arg[16];
-    char src_arg[32], cam_arg[64], camw_arg[16], camh_arg[16], camrot_arg[16];
+    char src_arg[32], cam_arg[64], camw_arg[16], camh_arg[16], camrot_arg[16], tap_arg[16];
     snprintf(enc_bin, sizeof(enc_bin), "%s/encoder", bin_dir);
     snprintf(srv_bin, sizeof(srv_bin), "%s/rtsp_server", bin_dir);
     snprintf(w_arg, sizeof(w_arg), "%d", width);
@@ -49,14 +50,15 @@ int main(int argc, char **argv) {
     snprintf(camw_arg, sizeof(camw_arg), "%d", cam_w);
     snprintf(camh_arg, sizeof(camh_arg), "%d", cam_h);
     snprintf(camrot_arg, sizeof(camrot_arg), "%d", cam_rot);
+    snprintf(tap_arg, sizeof(tap_arg), "%d", local_tap);
 
-    LOGI("publisher_supervisor: %dx%d@%dfps port=%d source=%s cam=%s %dx%d rot=%d", width,
-         height, fps, port, vsrc, cam_dev, cam_w, cam_h, cam_rot);
+    LOGI("publisher_supervisor: %dx%d@%dfps port=%d source=%s cam=%s %dx%d rot=%d tap=%d",
+         width, height, fps, port, vsrc, cam_dev, cam_w, cam_h, cam_rot, local_tap);
 
     SupState st;
     memset(&st, 0, sizeof(st));
-    sup_add9(&st, "encoder", enc_bin, w_arg, h_arg, fps_arg, sec_arg, src_arg, cam_arg,
-             camw_arg, camh_arg, camrot_arg);
+    sup_add11(&st, "encoder", enc_bin, w_arg, h_arg, fps_arg, sec_arg, src_arg, cam_arg,
+              camw_arg, camh_arg, camrot_arg, tap_arg, NULL);
     sup_start_one(&st, 0);
     sleep(2);
     sup_add(&st, "rtsp_server", srv_bin, port_arg, NULL);

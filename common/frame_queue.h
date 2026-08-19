@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 #define FQ_MAX_CHANNELS 8
-#define FQ_VIDEO_SLOT_SIZE (512 * 1024)
+#define FQ_VIDEO_SLOT_SIZE (1536 * 1024)
 #define FQ_AUDIO_SLOT_SIZE (8 * 1024)
 #define FQ_VIDEO_SLOTS 16
 #define FQ_AUDIO_SLOTS 32
@@ -25,8 +25,12 @@ typedef struct {
     uint32_t data_len;
     uint64_t pts_us;
     uint8_t is_key;
-    uint8_t reserved[7];
+    uint8_t fmt; /* 0=H265 AU, 1=NV12 raw（本地 MIPI 旁路） */
+    uint8_t reserved[6];
 } FqFrameMeta;
+
+#define FQ_FMT_H265 0
+#define FQ_FMT_NV12 1
 
 int fq_pool_create(FqMediaType type, uint32_t channel_num);
 int fq_pool_attach(FqMediaType type, uint32_t channel_num);

@@ -13,7 +13,8 @@
 #include <rga/rga.h>
 
 typedef struct {
-    uint8_t *src_nv12;
+    uint8_t *src_nv12[2];
+    int front_idx;
     uint8_t *disp_nv12;
     pthread_mutex_t lock;
     uint64_t seq;
@@ -120,10 +121,13 @@ DisplayRga *display_rga_create(int channel_count, int src_w, int src_h, int disp
         return NULL;
     }
     for (int i = 0; i < channel_count; ++i) {
-        d->channels[i].src_nv12 = malloc(nv12_bytes(src_w, src_h));
+        d->channels[i].src_nv12[0] = malloc(nv12_bytes(src_w, src_h));
+        d->channels[i].src_nv12[1] = malloc(nv12_bytes(src_w, src_h));
+        d->channels[i].front_idx = 0;
         d->channels[i].disp_nv12 = malloc(nv12_bytes(disp_w, disp_h));
         pthread_mutex_init(&d->channels[i].lock, NULL);
-        if (!d->channels[i].src_nv12 || !d->channels[i].disp_nv12) {
+        if (!d->channels[i].src_nv12[0] || !d->channels[i].src_nv12[1] ||
+            !d->channels[i].disp_nv12) {
             display_rga_destroy(d);
             return NULL;
         }
@@ -139,7 +143,8 @@ void display_rga_destroy(DisplayRga *d) {
     }
     if (d->channels) {
         for (int i = 0; i < d->channel_count; ++i) {
-            free(d->channels[i].src_nv12);
+            free(d->channels[i].src_nv12[0]);
+            free(d->channels[i].src_nv12[1]);
             free(d->channels[i].disp_nv12);
             pthread_mutex_destroy(&d->channels[i].lock);
         }
@@ -159,7 +164,9 @@ int display_rga_update_channel(DisplayRga *d, int channel, const uint8_t *src_nv
     }
     DisplayChannel *c = &d->channels[channel];
     pthread_mutex_lock(&c->lock);
-    memcpy(c->src_nv12, src_nv12, nv12_bytes(d->src_w, d->src_h));
+    int back = 1 - c->front_idx;
+    memcpy(c->src_nv12[back], src_nv12, nv12_bytes(d->src_w, d->src_h));
+    c->front_idx = back;
     ++c->seq;
     c->ready = 1;
     pthread_mutex_unlock(&c->lock);
@@ -179,25 +186,42 @@ int display_rga_render_active(DisplayRga *d, uint8_t *disp_nv12) {
         return -1;
     }
     DisplayChannel *c = &d->channels[d->active];
+    uint8_t *src_copy = NULL;
+    size_t src_sz = nv12_bytes(d->src_w, d->src_h);
+    size_t disp_sz = nv12_bytes(d->disp_w, d->disp_h);
+    int cleared = 0;
+    int blit_rc;
+
     pthread_mutex_lock(&c->lock);
     if (!c->ready || c->rendered_seq == c->seq) {
         pthread_mutex_unlock(&c->lock);
         return 1;
     }
-    int blit_rc = rga_blit_nv12(c->src_nv12, d->src_w, d->src_h, c->disp_nv12, d->disp_w,
-                                d->disp_h, d->stretch, &c->cleared);
+    src_copy = malloc(src_sz);
+    if (!src_copy) {
+        pthread_mutex_unlock(&c->lock);
+        return -1;
+    }
+    memcpy(src_copy, c->src_nv12[c->front_idx], src_sz);
+    cleared = c->cleared;
+    c->rendered_seq = c->seq;
+    pthread_mutex_unlock(&c->lock);
+
+    blit_rc = rga_blit_nv12(src_copy, d->src_w, d->src_h, c->disp_nv12, d->disp_w, d->disp_h,
+                             d->stretch, &cleared);
+    free(src_copy);
     if (blit_rc != 0) {
         static int warn_count;
         if (warn_count < 5) {
             LOGW("display_rga ch=%d RGA blit failed", d->active);
             ++warn_count;
         }
-        pthread_mutex_unlock(&c->lock);
         return -1;
     }
-    c->rendered_seq = c->seq;
-    memcpy(disp_nv12, c->disp_nv12, nv12_bytes(d->disp_w, d->disp_h));
+    pthread_mutex_lock(&c->lock);
+    c->cleared = cleared;
     pthread_mutex_unlock(&c->lock);
+    memcpy(disp_nv12, c->disp_nv12, disp_sz);
     return 0;
 }
 

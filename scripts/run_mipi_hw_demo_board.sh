@@ -40,26 +40,36 @@ sleep 3
 
 rm -f /tmp/ch0.yuv /tmp/ch1.yuv /tmp/display_480x800.yuv /tmp/pub.log /tmp/preview.log /tmp/cam_smoke.nv12
 
-echo "[mipi-hw] publisher: camera -> H.265 RTSP :554"
-"${RUN}/publisher_supervisor" "${RUN}/config/publisher.ini" "${RUN}" 554 0 > /tmp/pub.log 2>&1 &
-for _i in $(seq 1 45); do
-  if ss -ltnp 2>/dev/null | grep -q '0.0.0.0:554.*rtsp_server'; then
-    echo "[mipi-hw] RTSP IPv4 :554 ready (${_i}s)"
-    break
-  fi
-  sleep 1
-done
-if ! ss -ltnp 2>/dev/null | grep -q '0.0.0.0:554.*rtsp_server'; then
-  echo "[mipi-hw] ERROR: RTSP not listening on 0.0.0.0:554" >&2
-  ss -ltnp 2>/dev/null | grep 554 || true
-  grep -E 'RTSP|bind|failed' /tmp/pub.log 2>/dev/null | tail -10 || true
-  exit 1
-fi
-sleep 8
+LOCAL=0
+grep -qE 'previewMode\s*=\s*local' "${RUN}/config/loopback.ini" 2>/dev/null && LOCAL=1
 
-echo "[mipi-hw] preview: 2ch + RGA 480x800 MIPI"
-"${RUN}/preview_supervisor" "${RUN}/config/loopback.ini" "${RUN}" > /tmp/preview.log 2>&1 &
-PREVIEW_PID=$!
+if [ "${LOCAL}" = 1 ]; then
+  echo "[mipi-hw] local NV12: preview first, then publisher + nv12 tap"
+  "${RUN}/preview_supervisor" "${RUN}/config/loopback.ini" "${RUN}" > /tmp/preview.log 2>&1 &
+  PREVIEW_PID=$!
+  sleep 5
+  "${RUN}/publisher_supervisor" "${RUN}/config/publisher.ini" "${RUN}" 554 0 > /tmp/pub.log 2>&1 &
+else
+  echo "[mipi-hw] publisher: camera -> H.265 RTSP :554"
+  "${RUN}/publisher_supervisor" "${RUN}/config/publisher.ini" "${RUN}" 554 0 > /tmp/pub.log 2>&1 &
+  for _i in $(seq 1 45); do
+    if ss -ltnp 2>/dev/null | grep -q '0.0.0.0:554.*rtsp_server'; then
+      echo "[mipi-hw] RTSP IPv4 :554 ready (${_i}s)"
+      break
+    fi
+    sleep 1
+  done
+  if ! ss -ltnp 2>/dev/null | grep -q '0.0.0.0:554.*rtsp_server'; then
+    echo "[mipi-hw] ERROR: RTSP not listening on 0.0.0.0:554" >&2
+    ss -ltnp 2>/dev/null | grep 554 || true
+    grep -E 'RTSP|bind|failed' /tmp/pub.log 2>/dev/null | tail -10 || true
+    exit 1
+  fi
+  sleep 8
+  echo "[mipi-hw] preview: RTSP decode + RGA 480x800 MIPI"
+  "${RUN}/preview_supervisor" "${RUN}/config/loopback.ini" "${RUN}" > /tmp/preview.log 2>&1 &
+  PREVIEW_PID=$!
+fi
 sleep 90
 kill -TERM "${PREVIEW_PID}" 2>/dev/null || true
 sleep 3

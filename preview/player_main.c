@@ -41,15 +41,46 @@ static int au_decodable(int len) {
     return len >= 256;
 }
 
+static void player_emit_frame(PlayerArgs *a, uint8_t *nv12, int *frame, uint64_t pts_us,
+                              int update_display) {
+    ++(*frame);
+    if (update_display && (int)a->channel == a->display_channel) {
+        display_rga_update_channel(a->display, (int)a->channel, nv12);
+    }
+    if (a->dump_every > 0 && *frame % a->dump_every == 0) {
+        char out_path[128];
+        snprintf(out_path, sizeof(out_path), "/tmp/ch%u.yuv", a->channel);
+        FILE *fp = fopen(out_path, "wb");
+        if (fp) {
+            fwrite(nv12, 1, (size_t)a->width * a->height * 3 / 2, fp);
+            fclose(fp);
+            LOGI("dump %s frame=%d pts=%llu y0=%u", out_path, *frame,
+                 (unsigned long long)pts_us, nv12[0]);
+        }
+    }
+}
+
+static void player_drain_decoder(MppDecoder *dec, PlayerArgs *a, uint8_t *nv12, int nv12_cap,
+                                 int *frame, uint64_t pts_us, int update_display) {
+    int rc;
+    while ((rc = mpp_decoder_drain(dec, nv12, nv12_cap)) == 0) {
+        player_emit_frame(a, nv12, frame, pts_us, update_display);
+    }
+    (void)rc;
+}
+
 static void *player_thread(void *arg) {
     PlayerArgs *a = (PlayerArgs *)arg;
     uint8_t *bitstream = (uint8_t *)malloc(FQ_VIDEO_SLOT_SIZE);
     uint8_t *nv12 = (uint8_t *)malloc((size_t)a->width * a->height * 3 / 2);
     MppDecoder *dec = mpp_decoder_create_hevc(a->width, a->height);
-    char out_path[128];
     int frame = 0;
     int nv12_cap = a->width * a->height * 3 / 2;
     int feeds_display = ((int)a->channel == a->display_channel);
+    int local_preview = (getenv("PREVIEW_LOCAL") != NULL);
+    int skip = 0;
+    int put_fail = 0;
+    int need_more = 0;
 
     if (!bitstream || !nv12 || !dec) {
         LOGE("player ch=%u init failed", a->channel);
@@ -61,48 +92,54 @@ static void *player_thread(void *arg) {
 
     while (g_run) {
         FqFrameMeta meta;
-        int rc;
-        if (feeds_display) {
-            rc = fq_preview_pop_latest(a->channel, &meta, bitstream, FQ_VIDEO_SLOT_SIZE);
-        } else {
-            rc = fq_preview_pop(a->channel, &meta, bitstream, FQ_VIDEO_SLOT_SIZE);
-        }
+        int rc = local_preview ? fq_preview_pop_latest(a->channel, &meta, bitstream,
+                                                         FQ_VIDEO_SLOT_SIZE)
+                               : fq_preview_pop(a->channel, &meta, bitstream, FQ_VIDEO_SLOT_SIZE);
         if (rc == 1) {
+            if (!local_preview) {
+                player_drain_decoder(dec, a, nv12, nv12_cap, &frame, 0, 0);
+            }
             usleep(2000);
             continue;
         }
         if (rc < 0) {
             break;
         }
+        if (meta.fmt == FQ_FMT_NV12 && (int)meta.data_len == nv12_cap) {
+            player_emit_frame(a, bitstream, &frame, meta.pts_us, feeds_display);
+            if (frame > 0 && frame % 100 == 0) {
+                LOGI("player ch=%u local_nv12=%d depth=%u", a->channel, frame,
+                     fq_preview_depth(a->channel));
+            }
+            continue;
+        }
         if (!au_decodable((int)meta.data_len)) {
+            ++skip;
             continue;
         }
         rc = mpp_decoder_decode(dec, bitstream, (int)meta.data_len, nv12, nv12_cap);
-        if (rc == 1) {
+        if (rc == 0) {
+            player_emit_frame(a, nv12, &frame, meta.pts_us, feeds_display);
+        } else if (rc == 1) {
+            ++need_more;
+        } else {
+            ++put_fail;
+        }
+        player_drain_decoder(dec, a, nv12, nv12_cap, &frame, meta.pts_us, feeds_display);
+        if (frame > 0 && frame % 100 == 0) {
+            LOGI("player ch=%u decoded=%d depth=%u skip=%d need_more=%d put_fail=%d",
+                 a->channel, frame, fq_preview_depth(a->channel), skip, need_more, put_fail);
+        }
+        /* 队列积压时不 sleep，尽快追帧；每解出一帧都送显 */
+        if (feeds_display && fq_preview_depth(a->channel) > 0) {
             continue;
-        }
-        if (rc < 0) {
-            continue;
-        }
-        ++frame;
-        if (feeds_display) {
-            display_rga_update_channel(a->display, (int)a->channel, nv12);
-        }
-        if (a->dump_every > 0 && frame % a->dump_every == 0) {
-            snprintf(out_path, sizeof(out_path), "/tmp/ch%u.yuv", a->channel);
-            FILE *fp = fopen(out_path, "wb");
-            if (fp) {
-                fwrite(nv12, 1, (size_t)a->width * a->height * 3 / 2, fp);
-                fclose(fp);
-                LOGI("dump %s frame=%d pts=%llu y0=%u", out_path, frame,
-                     (unsigned long long)meta.pts_us, nv12[0]);
-            }
         }
     }
     mpp_decoder_destroy(dec);
     free(bitstream);
     free(nv12);
-    LOGI("player ch=%u decoded %d frames display=%d", a->channel, frame, feeds_display);
+    LOGI("player ch=%u decoded %d frames display=%d skip=%d need_more=%d put_fail=%d",
+         a->channel, frame, feeds_display, skip, need_more, put_fail);
     return NULL;
 }
 
@@ -123,9 +160,11 @@ static void *display_thread(void *arg) {
         }
         if (display_rga_render_active(a->display, buf) == 0) {
             display_output_present(a->output, buf);
+            usleep((useconds_t)a->refresh_ms * 1000);
+        } else {
+            usleep(5000);
         }
         ++tick;
-        usleep((useconds_t)a->refresh_ms * 1000);
     }
     return NULL;
 }
@@ -149,6 +188,7 @@ int main(int argc, char **argv) {
     int enable_drm = (argc > 9) ? atoi(argv[9]) : 1;
     int display_channel = (argc > 10) ? atoi(argv[10]) : 0;
     int display_stretch = (argc > 11) ? atoi(argv[11]) : 1;
+    int local_preview = (getenv("PREVIEW_LOCAL") != NULL);
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
 
@@ -171,9 +211,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     LOGI("player display: src=%dx%d -> disp=%dx%d drm=%d display_ch=%d stretch=%d dump=%d "
-         "refresh=%dms",
+         "refresh=%dms local=%d",
          width, height, disp_w, disp_h, display_output_using_drm(output), display_channel,
-         display_stretch, dump_every, refresh_ms);
+         display_stretch, dump_every, refresh_ms, local_preview);
 
     pthread_t th[8];
     PlayerArgs args[8];

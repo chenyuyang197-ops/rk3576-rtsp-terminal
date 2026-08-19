@@ -62,13 +62,16 @@ static int fq_open_channel_key(FqChannelCtx *ctx, key_t key, uint32_t slot_size,
     int flags = create ? (IPC_CREAT | IPC_EXCL | 0666) : 0666;
     int shmid = shmget(key, size, flags);
     if (shmid < 0 && create && errno == EEXIST) {
-        shmid = shmget(key, size, 0666);
-        if (shmid >= 0) {
-            shmctl(shmid, IPC_RMID, NULL);
-            shmid = shmget(key, size, IPC_CREAT | IPC_EXCL | 0666);
+        /* 旧段尺寸可能不同（如 slot 从 512KB 扩到 1536KB），须先按 key 删除 */
+        int old = shmget(key, 0, 0666);
+        if (old >= 0) {
+            shmctl(old, IPC_RMID, NULL);
         }
+        shmid = shmget(key, size, IPC_CREAT | IPC_EXCL | 0666);
     }
     if (shmid < 0) {
+        fprintf(stderr, "fq shmget key=0x%x size=%zu failed: %s\n", (unsigned)key, size,
+                strerror(errno));
         return -1;
     }
     void *addr = shmat(shmid, NULL, 0);

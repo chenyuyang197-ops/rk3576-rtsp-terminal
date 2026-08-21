@@ -35,12 +35,19 @@ static uint32_t g_audio_channels;
 static FqChannelCtx g_preview_video[FQ_MAX_CHANNELS];
 static uint32_t g_preview_video_channels;
 
+static FqChannelCtx g_preview_audio[FQ_MAX_CHANNELS];
+static uint32_t g_preview_audio_channels;
+
 static key_t fq_key(FqMediaType type, uint32_t channel) {
     return (key_t)(FQ_SHM_KEY_BASE + (type * 16) + channel);
 }
 
 static key_t fq_preview_key(uint32_t channel) {
     return (key_t)(FQ_SHM_PREVIEW_KEY_BASE + channel);
+}
+
+static key_t fq_preview_audio_key(uint32_t channel) {
+    return (key_t)(FQ_SHM_PREVIEW_AUDIO_KEY_BASE + channel);
 }
 
 static size_t fq_shm_size(uint32_t slot_size, uint32_t slot_count) {
@@ -303,4 +310,74 @@ uint32_t fq_preview_depth(uint32_t channel) {
         return 0;
     }
     return g_preview_video[channel].ring->hdr.count;
+}
+
+static int fq_preview_audio_open(uint32_t channel, int create) {
+    if (channel >= FQ_MAX_CHANNELS) {
+        return -1;
+    }
+    return fq_open_channel_key(&g_preview_audio[channel], fq_preview_audio_key(channel),
+                               FQ_AUDIO_SLOT_SIZE, FQ_AUDIO_SLOTS, create);
+}
+
+int fq_preview_audio_pool_create(uint32_t channel_num) {
+    g_preview_audio_channels = channel_num;
+    for (uint32_t i = 0; i < channel_num; ++i) {
+        if (fq_preview_audio_open(i, 1) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int fq_preview_audio_pool_attach(uint32_t channel_num) {
+    g_preview_audio_channels = channel_num;
+    for (uint32_t i = 0; i < channel_num; ++i) {
+        if (fq_preview_audio_open(i, 0) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int fq_preview_audio_attach_channel(uint32_t channel) {
+    if (channel >= FQ_MAX_CHANNELS) {
+        return -1;
+    }
+    if (channel + 1 > g_preview_audio_channels) {
+        g_preview_audio_channels = channel + 1;
+    }
+    return fq_preview_audio_open(channel, 0);
+}
+
+void fq_preview_audio_pool_detach(void) {
+    for (uint32_t i = 0; i < g_preview_audio_channels; ++i) {
+        if (g_preview_audio[i].ring) {
+            shmdt(g_preview_audio[i].ring);
+            g_preview_audio[i].ring = NULL;
+        }
+    }
+}
+
+int fq_preview_audio_push(uint32_t channel, const FqFrameMeta *meta, const uint8_t *data) {
+    if (channel >= g_preview_audio_channels || !g_preview_audio[channel].ring) {
+        return -1;
+    }
+    FqChannelCtx *ctx = &g_preview_audio[channel];
+    return fq_push_ring(ctx->ring, ctx->slot_size, ctx->slot_count, meta, data);
+}
+
+int fq_preview_audio_pop(uint32_t channel, FqFrameMeta *meta, uint8_t *data, uint32_t data_cap) {
+    if (channel >= g_preview_audio_channels || !g_preview_audio[channel].ring) {
+        return -1;
+    }
+    FqChannelCtx *ctx = &g_preview_audio[channel];
+    return fq_pop_ring(ctx->ring, ctx->slot_size, ctx->slot_count, meta, data, data_cap);
+}
+
+uint32_t fq_preview_audio_depth(uint32_t channel) {
+    if (channel >= g_preview_audio_channels || !g_preview_audio[channel].ring) {
+        return 0;
+    }
+    return g_preview_audio[channel].ring->hdr.count;
 }

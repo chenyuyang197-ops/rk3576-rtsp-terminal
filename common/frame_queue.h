@@ -15,6 +15,7 @@ extern "C" {
 #define FQ_AUDIO_SLOTS 32
 #define FQ_SHM_KEY_BASE 0x5200
 #define FQ_SHM_PREVIEW_KEY_BASE 0x5300
+#define FQ_SHM_PREVIEW_AUDIO_KEY_BASE 0x5310
 
 typedef enum {
     FQ_TYPE_VIDEO = 0,
@@ -56,6 +57,15 @@ int fq_preview_pop_latest(uint32_t channel, FqFrameMeta *meta, uint8_t *data,
                           uint32_t data_cap);
 int fq_preview_flush(uint32_t channel);
 uint32_t fq_preview_depth(uint32_t channel);
+
+/* 预览端音频 shm（麦克风 AAC-ADTS 本地旁路） */
+int fq_preview_audio_pool_create(uint32_t channel_num);
+int fq_preview_audio_pool_attach(uint32_t channel_num);
+int fq_preview_audio_attach_channel(uint32_t channel);
+void fq_preview_audio_pool_detach(void);
+int fq_preview_audio_push(uint32_t channel, const FqFrameMeta *meta, const uint8_t *data);
+int fq_preview_audio_pop(uint32_t channel, FqFrameMeta *meta, uint8_t *data, uint32_t data_cap);
+uint32_t fq_preview_audio_depth(uint32_t channel);
 
 #ifdef __cplusplus
 }

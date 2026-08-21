@@ -33,6 +33,9 @@ int main(int argc, char **argv) {
     int cam_h = ini_get_int(&cfg, "cameraHeight", 1080);
     int cam_rot = ini_get_int(&cfg, "cameraRotation", 270);
     int local_tap = ini_get_int(&cfg, "localNv12Tap", 0);
+    int enable_audio = ini_get_int(&cfg, "enableAudio", 1);
+    int pub_channels = ini_get_int(&cfg, "rtspStreamChannels", 1);
+    const char *audio_dev = ini_get(&cfg, "audioDevice", "hw:0,0");
 
     char enc_bin[512];
     char srv_bin[512];
@@ -52,8 +55,26 @@ int main(int argc, char **argv) {
     snprintf(camrot_arg, sizeof(camrot_arg), "%d", cam_rot);
     snprintf(tap_arg, sizeof(tap_arg), "%d", local_tap);
 
-    LOGI("publisher_supervisor: %dx%d@%dfps port=%d source=%s cam=%s %dx%d rot=%d tap=%d",
-         width, height, fps, port, vsrc, cam_dev, cam_w, cam_h, cam_rot, local_tap);
+    char pub_ch_arg[16];
+    snprintf(pub_ch_arg, sizeof(pub_ch_arg), "%d", pub_channels);
+    setenv("ENC_PUB_CHANNELS", pub_ch_arg, 1);
+    setenv("RTSP_PUB_CHANNELS", pub_ch_arg, 1);
+
+    LOGI("publisher_supervisor: %dx%d@%dfps port=%d source=%s cam=%s %dx%d rot=%d tap=%d audio=%d pub_ch=%d dev=%s",
+         width, height, fps, port, vsrc, cam_dev, cam_w, cam_h, cam_rot, local_tap,
+         enable_audio, pub_channels, audio_dev);
+
+    if (enable_audio) {
+        setenv("ENC_ENABLE_AUDIO", "1", 1);
+    } else {
+        setenv("ENC_ENABLE_AUDIO", "0", 1);
+    }
+    setenv("ENC_AUDIO_DEVICE", audio_dev, 1);
+    if (local_tap) {
+        setenv("LOCAL_AUDIO_TAP", "1", 1);
+    } else {
+        unsetenv("LOCAL_AUDIO_TAP");
+    }
 
     SupState st;
     memset(&st, 0, sizeof(st));

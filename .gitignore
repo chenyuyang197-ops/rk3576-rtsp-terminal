@@ -28,6 +28,8 @@ test_pattern
 *.yuv
 *.h265
 *.nv12
+samples/*.ts
+samples/*.mkv
 
 # Secrets
 .env

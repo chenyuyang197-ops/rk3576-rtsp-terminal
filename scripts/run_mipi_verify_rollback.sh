@@ -13,6 +13,7 @@ echo "=== mipi verify mode=$([ "$LOCAL" = 1 ] && echo local || echo rtsp) $(date
 
 "${BOARD}/scripts/stop_all_board.sh"
 sleep 3
+pkill -9 -f "${RUN}/encoder" 2>/dev/null || true
 for _ in 1 2 3 4 5 6; do
   fuser -k 554/tcp 2>/dev/null || true
   pkill -9 -f "${RUN}/rtsp_server" 2>/dev/null || true
@@ -30,7 +31,7 @@ for _iface in end0 eth0; do
 done
 ip addr add 192.168.1.100/32 dev lo 2>/dev/null || true
 systemctl restart rkaiq_3A.service 2>/dev/null || true
-sleep 3
+sleep 12
 
 rm -f /tmp/ch0.yuv /tmp/pub.log /tmp/preview.log
 
@@ -39,7 +40,7 @@ if [ "${LOCAL}" = 1 ]; then
   stdbuf -oL -eL "${RUN}/preview_supervisor" "${RUN}/config/loopback.ini" "${RUN}" \
     > /tmp/preview.log 2>&1 &
   PV=$!
-  sleep 5
+  sleep 8
   echo "[verify] publisher + nv12 tap"
   "${RUN}/publisher_supervisor" "${RUN}/config/publisher.ini" "${RUN}" 554 0 > /tmp/pub.log 2>&1 &
 else

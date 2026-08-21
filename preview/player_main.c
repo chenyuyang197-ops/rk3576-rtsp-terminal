@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static volatile sig_atomic_t g_run = 1;
@@ -143,6 +144,74 @@ static void *player_thread(void *arg) {
     return NULL;
 }
 
+static void *audio_playback_thread(void *arg) {
+    (void)arg;
+    uint8_t *buf = (uint8_t *)malloc(FQ_AUDIO_SLOT_SIZE);
+    int pipefd[2];
+    pid_t pid = -1;
+    int frames = 0;
+
+    if (!buf) {
+        return NULL;
+    }
+    while (g_run && fq_preview_audio_attach_channel(0) < 0) {
+        usleep(100000);
+    }
+    if (pipe(pipefd) < 0) {
+        free(buf);
+        return NULL;
+    }
+    pid = fork();
+    if (pid == 0) {
+        close(pipefd[1]);
+        dup2(pipefd[0], 0);
+        close(pipefd[0]);
+        const char *adev = getenv("AUDIO_PLAYBACK_DEVICE");
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd),
+                 "gst-launch-1.0 -q fdsrc blocksize=512 ! queue max-size-buffers=32 ! "
+                 "audio/mpeg,mpegversion=4,stream-format=adts,rate=44100,channels=2 ! "
+                 "aacparse ! faad ! audioconvert ! audioresample ! autoaudiosink sync=false "
+                 "2>/tmp/audio_playback.err");
+        execlp("sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    close(pipefd[0]);
+    LOGI("audio playback gst pid=%d", (int)pid);
+    while (g_run) {
+        FqFrameMeta meta;
+        int rc = fq_preview_audio_pop(0, &meta, buf, FQ_AUDIO_SLOT_SIZE);
+        if (rc == 1) {
+            usleep(5000);
+            continue;
+        }
+        if (rc < 0) {
+            break;
+        }
+        size_t off = 0;
+        while (off < meta.data_len) {
+            ssize_t n = write(pipefd[1], buf + off, meta.data_len - off);
+            if (n <= 0) {
+                goto out;
+            }
+            off += (size_t)n;
+        }
+        ++frames;
+        if (frames <= 3 || frames % 100 == 0) {
+            LOGI("audio playback frames=%d depth=%u", frames, fq_preview_audio_depth(0));
+        }
+    }
+out:
+    close(pipefd[1]);
+    if (pid > 0) {
+        kill(pid, SIGTERM);
+        waitpid(pid, NULL, 0);
+    }
+    free(buf);
+    LOGI("audio playback total frames=%d", frames);
+    return NULL;
+}
+
 static void *display_thread(void *arg) {
     DisplayThreadArgs *a = (DisplayThreadArgs *)arg;
     uint8_t *buf = display_rga_compose_buf(a->display);
@@ -189,11 +258,16 @@ int main(int argc, char **argv) {
     int display_channel = (argc > 10) ? atoi(argv[10]) : 0;
     int display_stretch = (argc > 11) ? atoi(argv[11]) : 1;
     int local_preview = (getenv("PREVIEW_LOCAL") != NULL);
+    int enable_audio = (getenv("ENABLE_AUDIO") != NULL);
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
 
     if (fq_preview_pool_attach((uint32_t)chn) < 0) {
         LOGE("attach preview video pool failed");
+        return 1;
+    }
+    if (enable_audio && fq_preview_audio_pool_attach((uint32_t)chn) < 0) {
+        LOGE("attach preview audio pool failed");
         return 1;
     }
 
@@ -211,9 +285,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     LOGI("player display: src=%dx%d -> disp=%dx%d drm=%d display_ch=%d stretch=%d dump=%d "
-         "refresh=%dms local=%d",
+         "refresh=%dms local=%d audio=%d",
          width, height, disp_w, disp_h, display_output_using_drm(output), display_channel,
-         display_stretch, dump_every, refresh_ms, local_preview);
+         display_stretch, dump_every, refresh_ms, local_preview, enable_audio);
 
     pthread_t th[8];
     PlayerArgs args[8];
@@ -231,6 +305,16 @@ int main(int argc, char **argv) {
     pthread_t disp_th;
     pthread_create(&disp_th, NULL, display_thread, &dargs);
 
+    pthread_t audio_th;
+    int audio_started = 0;
+    if (enable_audio) {
+        if (pthread_create(&audio_th, NULL, audio_playback_thread, NULL) == 0) {
+            audio_started = 1;
+        } else {
+            LOGW("audio playback thread create failed");
+        }
+    }
+
     while (g_run) {
         sleep(1);
     }
@@ -238,8 +322,12 @@ int main(int argc, char **argv) {
         pthread_join(th[i], NULL);
     }
     pthread_join(disp_th, NULL);
+    if (audio_started) {
+        pthread_join(audio_th, NULL);
+    }
     display_output_destroy(output);
     display_rga_destroy(display);
     fq_preview_pool_detach();
+    fq_preview_audio_pool_detach();
     return 0;
 }

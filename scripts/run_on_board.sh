@@ -3,7 +3,7 @@
 set -euo pipefail
 
 RUN="${1:-/home/lckfb/rk3576-rtsp-terminal/run}"
-CFG="${RUN}/config/loopback.ini"
+CFG="${RUN}/config/loopback_rtsp_2ch.ini"
 
 pkill -f publisher_supervisor || true
 pkill -f preview_supervisor || true

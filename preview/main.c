@@ -50,6 +50,7 @@ int main(int argc, char **argv) {
     int dump_every = ini_get_int(&cfg, "dumpEvery", 0);
     int display_channel = ini_get_int(&cfg, "displayChannel", 0);
     int display_stretch = ini_get_int(&cfg, "displayStretch", 1);
+    int enable_audio = ini_get_int(&cfg, "enableAudio", 1);
     const char *preview_mode = ini_get(&cfg, "previewMode", "rtsp");
     int local_preview = (strcmp(preview_mode, "local") == 0);
     int rtsp_tasks = local_preview ? 0 : count_rtsp_tasks(&cfg, chn);
@@ -62,10 +63,18 @@ int main(int argc, char **argv) {
         LOGE("preview shm create failed for %d channels", chn);
         return 1;
     }
+    if (enable_audio && fq_preview_audio_pool_create((uint32_t)chn) < 0) {
+        LOGE("preview audio shm create failed for %d channels", chn);
+        return 1;
+    }
 
     if (local_preview) {
         LOGI("preview: local NV12 mode (bypass rtsp_channel/decode)");
         setenv("PREVIEW_LOCAL", "1", 1);
+    }
+    if (enable_audio) {
+        setenv("ENABLE_AUDIO", "1", 1);
+        LOGI("preview: microphone playback enabled");
     }
 
     SupState st;
@@ -97,12 +106,14 @@ int main(int argc, char **argv) {
     /* player 先起；local 模式不等 RTSP */
     sup_start_one(&st, rtsp_tasks);
     if (!local_preview) {
-        sleep(5);
-        for (int i = 0; i < rtsp_tasks; ++i) {
+        sleep(3);
+        if (rtsp_tasks > 0) {
+            sup_start_one(&st, 0);
+            sleep(10);
+        }
+        for (int i = 1; i < rtsp_tasks; ++i) {
             sup_start_one(&st, i);
-            if (i + 1 < rtsp_tasks) {
-                sleep(10);
-            }
+            sleep(2);
         }
     }
 

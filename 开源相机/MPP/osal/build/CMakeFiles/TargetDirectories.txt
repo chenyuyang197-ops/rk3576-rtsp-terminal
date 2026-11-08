@@ -1,0 +1,5 @@
+/home/teamhd/demo/demo-gb/MPP/osal/build/CMakeFiles/rebuild_cache.dir
+/home/teamhd/demo/demo-gb/MPP/osal/build/CMakeFiles/edit_cache.dir
+/home/teamhd/demo/demo-gb/MPP/osal/build/CMakeFiles/osal.dir
+/home/teamhd/demo/demo-gb/MPP/osal/build/test/CMakeFiles/rebuild_cache.dir
+/home/teamhd/demo/demo-gb/MPP/osal/build/test/CMakeFiles/edit_cache.dir

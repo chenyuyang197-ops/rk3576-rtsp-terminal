@@ -1,0 +1,3 @@
+/home/teamhd/demo/demo-gb/MPP/build/CMakeFiles/rebuild_cache.dir
+/home/teamhd/demo/demo-gb/MPP/build/CMakeFiles/edit_cache.dir
+/home/teamhd/demo/demo-gb/MPP/build/CMakeFiles/demo.dir
